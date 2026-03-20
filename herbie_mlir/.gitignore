@@ -1,0 +1,30 @@
+# Evaluation artifacts
+.snakemake
+eval/out/
+
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.lib
+
+# Generated files
+*.h.inc
+*.cpp.inc
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cargo cache
+target/
+Cargo.lock
