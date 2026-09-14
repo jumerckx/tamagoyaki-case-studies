@@ -475,7 +475,7 @@
                     "-DMLIR_DIR=${llvm-mlir}/lib/cmake/mlir"
                     "-DLLVM_DIR=${llvm-mlir}/lib/cmake/llvm"
                     "-DCIRCT_DIR=${circt}/lib/cmake/circt"
-                    "-DTamagoyaki_DIR=${tamagoyaki-pkg}/lib/cmake/tamagoyaki"
+                    "-DCMAKE_PREFIX_PATH=${tamagoyaki-pkg}"
                     "-DLLVM_EXTERNAL_LIT=${pkgs.lit}/bin/lit"
                     "-DRIVAL_PREBUILT_LIB=${rival-ffi}/lib/librival3_ffi.a"
                     "-DRIVAL_PREBUILT_INCLUDE=${rival-ffi}/include"
@@ -621,19 +621,19 @@
               # `case-studies-configure [build-dir] [extra cmake args...]`,
               # using the env the shells below export (CMAKE_PREFIX_PATH etc.).
               #
-              # Tamagoyaki_DIR defaults to the pinned flake input's store path.
-              # Override it to build against a local Tamagoyaki *build* tree --
-              # its build directory exports a config too, so the inner loop
-              # needs no install step:
-              #   case-studies-configure build \
-              #     -DTamagoyaki_DIR=../Tamagoyaki/build/lib/cmake/tamagoyaki
+              # Tamagoyaki comes off CMAKE_PREFIX_PATH (the pinned flake
+              # input). Set TAMAGOYAKI_DIR to point at a local Tamagoyaki
+              # *build* tree instead -- a build directory exports a config too,
+              # so the inner loop needs no install step:
+              #   TAMAGOYAKI_DIR=../Tamagoyaki/build/lib/cmake/tamagoyaki \
+              #     case-studies-configure build
               case-studies-configure = pkgs.writeShellScriptBin "case-studies-configure" ''
                 set -euo pipefail
                 builddir="''${1:-build}"
                 shift || true
                 exec cmake -G Ninja -B "$builddir" -S . \
                   -DCMAKE_BUILD_TYPE="''${CMAKE_BUILD_TYPE:-${buildType}}" \
-                  -DTamagoyaki_DIR="''${TAMAGOYAKI_DIR}" \
+                  ''${TAMAGOYAKI_DIR:+-DTamagoyaki_DIR="''${TAMAGOYAKI_DIR}"} \
                   -DLLVM_EXTERNAL_LIT="''${LLVM_EXTERNAL_LIT}" \
                   -DRIVAL_PREBUILT_LIB="''${RIVAL_PREBUILT_LIB}" \
                   -DRIVAL_PREBUILT_INCLUDE="''${RIVAL_PREBUILT_INCLUDE}" \
@@ -682,18 +682,17 @@
                     ++ debuggers
                   );
 
-                  # CMake locates MLIR/LLVM/CIRCT + gmp/mpfr/libmpc here.
-                  # Tamagoyaki is found through TAMAGOYAKI_DIR instead, so that
-                  # pointing the build at a local checkout is one variable and
-                  # does not disturb anything else on the prefix path.
+                  # CMake locates MLIR/LLVM/CIRCT, Tamagoyaki and
+                  # gmp/mpfr/libmpc here -- Tamagoyaki by prefix, like every
+                  # other dependency, rather than by config directory.
                   CMAKE_PREFIX_PATH = lib.concatStringsSep ":" [
                     "${llvm-mlir}"
+                    "${tamagoyaki-pkg}"
                     "${circt}"
                     "${pkgs.gmp.dev}"
                     "${pkgs.mpfr.dev}"
                     "${pkgs.libmpc}"
                   ];
-                  TAMAGOYAKI_DIR = "${tamagoyaki-pkg}/lib/cmake/tamagoyaki";
                   CMAKE_BUILD_TYPE = buildType;
                   LLVM_EXTERNAL_LIT = "${pkgs.lit}/bin/lit";
 

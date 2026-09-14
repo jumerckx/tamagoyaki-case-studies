@@ -34,8 +34,7 @@ install step in the inner loop:
 
 ```shell
 nix develop --override-input tamagoyaki path:../Tamagoyaki
-case-studies-configure build \
-  -DTamagoyaki_DIR=../Tamagoyaki/build/lib/cmake/tamagoyaki
+TAMAGOYAKI_DIR=../Tamagoyaki/build/lib/cmake/tamagoyaki case-studies-configure build
 ```
 
 Either case study can be switched off — `-DBUILD_HERBIE_MLIR=OFF`,
