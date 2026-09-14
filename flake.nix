@@ -1,5 +1,5 @@
 {
-  description = "Tamagoyaki - MLIR-based equality saturation framework";
+  description = "Case studies built on Tamagoyaki: Herbie-MLIR and Rover-MLIR";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";
@@ -27,9 +27,14 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    llvm-project-src = {
-      url = "github:llvm/llvm-project/040a641988f6ed6f4fab250706ca2b620c1de2d8";
-      flake = false;
+    # The framework. It also publishes the MLIR it was built against, as
+    # packages.llvm-mlir, so nothing here builds a second LLVM and the case
+    # studies cannot drift onto an MLIR their Tamagoyaki is not ABI-compatible
+    # with. Develop against a local checkout with:
+    #   nix develop --override-input tamagoyaki path:../Tamagoyaki
+    tamagoyaki = {
+      url = "github:jumerckx/Tamagoyaki";
+      inputs.nixpkgs.follows = "nixpkgs";
     };
     circt-src = {
       url = "github:llvm/circt/af5369d7ea19dafe8a48d58fa6577e80cde0e883";
@@ -94,7 +99,7 @@
       pyproject-nix,
       uv2nix,
       pyproject-build-systems,
-      llvm-project-src,
+      tamagoyaki,
       circt-src,
       rival3-src,
       herbie-src,
@@ -393,43 +398,14 @@
                 ];
               };
 
-              llvm-mlir = stdenv.mkDerivation (
-                variantAttrs
-                // {
-                  pname = "llvm-mlir${suffix}";
-                  version = "custom";
-                  src = llvm-project-src;
-                  sourceRoot = "source/llvm";
-                  nativeBuildInputs = with pkgs; [
-                    cmake
-                    ninja
-                    python3
-                  ];
-                  buildInputs = with pkgs; [
-                    zlib
-                    libffi
-                  ];
-                  cmakeFlags = commonCmakeFlags ++ [
-                    "-DLLVM_ENABLE_PROJECTS=mlir"
-                    "-DLLVM_BUILD_LLVM_DYLIB=ON"
-                    "-DLLVM_INCLUDE_TESTS=OFF"
-                    "-DLLVM_BUILD_TESTS=OFF"
-                    "-DLLVM_INCLUDE_EXAMPLES=OFF"
-                    "-DLLVM_BUILD_EXAMPLES=OFF"
-                    "-DLLVM_INCLUDE_BENCHMARKS=OFF"
-                    "-DLLVM_INCLUDE_DOCS=OFF"
-                    "-DLLVM_BUILD_DOCS=OFF"
-                    "-DMLIR_INCLUDE_TESTS=OFF"
-                    "-DMLIR_INCLUDE_INTEGRATION_TESTS=OFF"
-                    "-DMLIR_BUILD_MLIR_C_DYLIB=OFF"
-                    "-DLLVM_INSTALL_UTILS=ON"
-                  ];
-                  meta.platforms = lib.platforms.unix;
-                  preConfigure = lib.optionalString isDebug ''
-                    export NIX_CFLAGS_COMPILE="''${NIX_CFLAGS_COMPILE:-} -ffile-prefix-map=$NIX_BUILD_TOP/source=${llvm-project-src}"
-                  '';
-                }
-              );
+              # MLIR and Tamagoyaki both come from the tamagoyaki flake, already
+              # built with these same flags. Rebuilding either here would mean
+              # a second multi-hour LLVM and, worse, the chance of linking the
+              # case studies against a different one than Tamagoyaki's
+              # libraries were compiled against.
+              tamagoyakiPkgs = tamagoyaki.packages.${system};
+              llvm-mlir = tamagoyakiPkgs."llvm-mlir${suffix}";
+              tamagoyaki-pkg = tamagoyakiPkgs."tamagoyaki${suffix}";
 
               circt = stdenv.mkDerivation (
                 variantAttrs
@@ -465,10 +441,10 @@
                 }
               );
 
-              tamagoyaki = stdenv.mkDerivation (
+              case-studies = stdenv.mkDerivation (
                 variantAttrs
                 // {
-                  pname = "tamagoyaki${suffix}";
+                  pname = "tamagoyaki-case-studies${suffix}";
                   version = "0.1.0";
                   src = lib.cleanSource ./.;
 
@@ -483,6 +459,7 @@
                   ];
                   buildInputs = [
                     llvm-mlir
+                    tamagoyaki-pkg
                     circt
                     rival-ffi
                   ]
@@ -492,19 +469,17 @@
                     libmpc
                     zlib
                     libffi
-                    # HiGHS solver for the equivalence-select-ilp pass. Disable
-                    # with -DTAMAGOYAKI_ENABLE_HIGHS=OFF to drop this dependency.
-                    highs
                   ]);
 
                   cmakeFlags = [
                     "-DMLIR_DIR=${llvm-mlir}/lib/cmake/mlir"
                     "-DLLVM_DIR=${llvm-mlir}/lib/cmake/llvm"
                     "-DCIRCT_DIR=${circt}/lib/cmake/circt"
+                    "-DTamagoyaki_DIR=${tamagoyaki-pkg}/lib/cmake/tamagoyaki"
                     "-DLLVM_EXTERNAL_LIT=${pkgs.lit}/bin/lit"
                     "-DRIVAL_PREBUILT_LIB=${rival-ffi}/lib/librival3_ffi.a"
                     "-DRIVAL_PREBUILT_INCLUDE=${rival-ffi}/include"
-                    "-DCMAKE_INSTALL_RPATH=${llvm-mlir}/lib;${circt}/lib"
+                    "-DCMAKE_INSTALL_RPATH=${llvm-mlir}/lib;${circt}/lib;${tamagoyaki-pkg}/lib"
                     "-DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON"
                   ];
 
@@ -512,21 +487,22 @@
                 }
               );
 
-              mkEvalBuild = pname: flags: tamagoyaki.overrideAttrs (old: {
+              mkEvalBuild = pname: flags: case-studies.overrideAttrs (old: {
                 inherit pname;
                 cmakeFlags = old.cmakeFlags ++ flags;
               });
 
+              # One case study each: the Herbie pipeline has no use for CIRCT
+              # and the Rover pipeline none for Rival, so neither eval build
+              # pays for the other's dependencies.
               tamagoyaki-eval = mkEvalBuild "tamagoyaki-eval" [
                 "-DBUILD_HERBIE_MLIR=ON"
                 "-DBUILD_ROVER_MLIR=OFF"
-                "-DBUILD_CRANELIFT_MLIR=OFF"
               ];
 
               tamagoyaki-rover-eval = mkEvalBuild "tamagoyaki-rover-eval" [
                 "-DBUILD_HERBIE_MLIR=OFF"
                 "-DBUILD_ROVER_MLIR=ON"
-                "-DBUILD_CRANELIFT_MLIR=OFF"
               ];
 
               # Both evaluations are driven the same way: resolve the compiler
@@ -642,44 +618,47 @@
                 configArgs = ''circt_bin="$circt_bin" abc="$abc_bin"'';
               };
 
-              # `tamagoyaki-configure [build-dir] [extra cmake args...]`, using
-              # the env the shells below export (CMAKE_PREFIX_PATH, etc.).
-              tamagoyaki-configure = pkgs.writeShellScriptBin "tamagoyaki-configure" ''
+              # `case-studies-configure [build-dir] [extra cmake args...]`,
+              # using the env the shells below export (CMAKE_PREFIX_PATH etc.).
+              #
+              # Tamagoyaki_DIR defaults to the pinned flake input's store path.
+              # Override it to build against a local Tamagoyaki *build* tree --
+              # its build directory exports a config too, so the inner loop
+              # needs no install step:
+              #   case-studies-configure build \
+              #     -DTamagoyaki_DIR=../Tamagoyaki/build/lib/cmake/tamagoyaki
+              case-studies-configure = pkgs.writeShellScriptBin "case-studies-configure" ''
                 set -euo pipefail
                 builddir="''${1:-build}"
                 shift || true
                 exec cmake -G Ninja -B "$builddir" -S . \
                   -DCMAKE_BUILD_TYPE="''${CMAKE_BUILD_TYPE:-${buildType}}" \
+                  -DTamagoyaki_DIR="''${TAMAGOYAKI_DIR}" \
                   -DLLVM_EXTERNAL_LIT="''${LLVM_EXTERNAL_LIT}" \
                   -DRIVAL_PREBUILT_LIB="''${RIVAL_PREBUILT_LIB}" \
                   -DRIVAL_PREBUILT_INCLUDE="''${RIVAL_PREBUILT_INCLUDE}" \
                   "$@"
               '';
 
-              # inputsFrom = [ tamagoyaki ] supplies the build tooling and
-              # C/C++ deps. The dev shell (ci = false) adds Rust (rival's
-              # FetchContent fallback), full racket (Herbie via raco), uv, and
-              # debuggers; the CI shell is the minimum to run `check-all`.
-              # `docs = true` adds Doxygen + the Sphinx toolchain so the docs
-              # build (tablegen -> doxygen -> breathe -> sphinx) runs from Nix.
+              # inputsFrom = [ case-studies ] supplies the build tooling and
+              # C/C++ deps, Tamagoyaki included. The dev shell (ci = false)
+              # adds Rust (rival's FetchContent fallback), full racket (Herbie
+              # via raco), uv, and debuggers; the CI shell is the minimum to
+              # run `check-all`. (The documentation lives in the Tamagoyaki
+              # repository, so there is no docs shell here.)
               mkTamaShell =
-                {
-                  ci,
-                  docs ? false,
-                }:
+                { ci }:
                 (pkgs.mkShell.override { inherit stdenv; }) ({
-                  name = "tamagoyaki${suffix}${lib.optionalString ci "-ci"}${lib.optionalString docs "-docs"}";
+                  name = "tamagoyaki-case-studies${suffix}${lib.optionalString ci "-ci"}";
 
-                  inputsFrom = [ tamagoyaki ];
+                  inputsFrom = [ case-studies ];
 
                   inherit (variantAttrs) hardeningDisable;
 
                   packages = [
-                    tamagoyaki-configure
-                  ]
-                  ++ lib.optionals docs [
-                    pkgs.doxygen
-                    pythonEnv
+                    case-studies-configure
+                    # tamagoyaki-opt, which the lit suites run.
+                    tamagoyaki-pkg
                   ]
                   ++ lib.optionals (!ci) (
                     [
@@ -688,7 +667,7 @@
                       herbie-eval
                       rover-eval
                       # The full Python toolchain from uv.lock (xdsl, snakemake,
-                      # lit, pre-commit, cmake-format, plotting + docs deps).
+                      # lit, pre-commit, cmake-format, plotting).
                       pythonEnv
                     ]
                     ++ (with pkgs; [
@@ -704,14 +683,17 @@
                   );
 
                   # CMake locates MLIR/LLVM/CIRCT + gmp/mpfr/libmpc here.
+                  # Tamagoyaki is found through TAMAGOYAKI_DIR instead, so that
+                  # pointing the build at a local checkout is one variable and
+                  # does not disturb anything else on the prefix path.
                   CMAKE_PREFIX_PATH = lib.concatStringsSep ":" [
                     "${llvm-mlir}"
                     "${circt}"
                     "${pkgs.gmp.dev}"
                     "${pkgs.mpfr.dev}"
                     "${pkgs.libmpc}"
-                    "${pkgs.highs}"
                   ];
+                  TAMAGOYAKI_DIR = "${tamagoyaki-pkg}/lib/cmake/tamagoyaki";
                   CMAKE_BUILD_TYPE = buildType;
                   LLVM_EXTERNAL_LIT = "${pkgs.lit}/bin/lit";
 
@@ -724,8 +706,9 @@
                     # under `nix develop`; direnv does not execute shellHook.)
                     unset PYTHONPATH
 
-                    echo "tamagoyaki ${variant}${lib.optionalString ci " (ci)"} shell ready"
-                    echo "  configure: tamagoyaki-configure build"
+                    echo "tamagoyaki-case-studies ${variant}${lib.optionalString ci " (ci)"} shell ready"
+                    echo "  tamagoyaki: ${tamagoyaki-pkg}"
+                    echo "  configure: case-studies-configure build"
                     echo "  build:     ninja -C build check-all"
                     ${lib.optionalString (!ci) ''
                       echo "  herbie:    herbie-setup  (once; then racket -l herbie -- web --quiet)"
@@ -740,24 +723,20 @@
 
               shell = mkTamaShell { ci = false; };
               ciShell = mkTamaShell { ci = true; };
-              docsShell = mkTamaShell {
-                ci = true;
-                docs = true;
-              };
             in
             {
               inherit
                 llvm-mlir
                 circt
-                tamagoyaki
+                tamagoyaki-pkg
+                case-studies
+                case-studies-configure
                 tamagoyaki-eval
                 tamagoyaki-rover-eval
-                tamagoyaki-configure
                 herbie-eval
                 rover-eval
                 shell
                 ciShell
-                docsShell
                 ;
             };
 
@@ -765,6 +744,12 @@
           debug = mkVariant { variant = "debug"; };
 
           imageRev = self.rev or self.dirtyRev or "<unavailable: no git metadata in flake source>";
+          # The evaluation measures Tamagoyaki, so the manifest has to say
+          # which Tamagoyaki. Since the split that is no longer imageRev: this
+          # repository's revision names only the pipelines and the case studies.
+          tamagoyakiRev =
+            tamagoyaki.rev or tamagoyaki.dirtyRev
+              or "<unavailable: no git metadata in the tamagoyaki input>";
 
           eval-image-init = pkgs.writeShellApplication {
             name = "tamagoyaki-eval-init";
@@ -836,6 +821,7 @@
                 "PATH=/bin"
                 "TAMAGOYAKI_REPO_ROOT=/work/Tamagoyaki"
                 "TAMAGOYAKI_GIT_REV=${imageRev}"
+                "TAMAGOYAKI_FRAMEWORK_REV=${tamagoyakiRev}"
                 
                 "HERBIE_OUT_DIR=/results/herbie-eval-out"
                 "ROVER_OUT_DIR=/results/rover-eval-out"
@@ -866,11 +852,15 @@
         in
         {
           packages = {
-            default = release.tamagoyaki;
-            tamagoyaki = release.tamagoyaki;
-            tamagoyaki-debug = debug.tamagoyaki;
+            default = release.case-studies;
+            case-studies = release.case-studies;
+            case-studies-debug = debug.case-studies;
+            # Re-exported from the tamagoyaki input, so that `nix build
+            # .#llvm-mlir` here and there are the same store path.
             llvm-mlir = release.llvm-mlir;
             llvm-mlir-debug = debug.llvm-mlir;
+            tamagoyaki = release.tamagoyaki-pkg;
+            tamagoyaki-debug = debug.tamagoyaki-pkg;
             circt = release.circt;
             circt-debug = debug.circt;
             tamagoyaki-eval = release.tamagoyaki-eval;
@@ -891,7 +881,6 @@
             default = release.shell;
             debug = debug.shell;
             ci = release.ciShell;
-            docs = release.docsShell;
           };
           apps = {
             herbie-eval = {

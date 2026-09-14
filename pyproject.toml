@@ -1,7 +1,10 @@
 [project]
-name = "tamagoyaki"
+name = "tamagoyaki-case-studies"
 version = "0.1.0"
 requires-python = ">=3.13"
+# The two evaluation pipelines and the tools they call. Nothing here is needed
+# to build or use Tamagoyaki itself -- that repository keeps its own, much
+# smaller, Python surface (lit, cmake-format, pre-commit and the docs stack).
 dependencies = [
     "cmake-format>=0.6.13",
     "lit>=18.1.8",
@@ -14,25 +17,13 @@ dependencies = [
     "xdsl>=0.56.2",
 ]
 
-[project.optional-dependencies]
-docs = [
-    "sphinx>=8.0",
-    "furo>=2024.8.6",
-    "myst-parser>=4.0",
-    "breathe>=4.35",
-    "sphinx-copybutton>=0.5",
-    "sphinx-design>=0.6",
-    "sphinxcontrib-mermaid>=1.0",
-    "linkify-it-py>=2.0",
-]
-
 [tool.uv.workspace]
 members = [
     ".",
 ]
 
 [tool.uv.sources]
-tamagoyaki = { workspace = true }
+tamagoyaki-case-studies = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
@@ -59,7 +50,7 @@ rover-egraph-table = "tamagoyaki_eval.rover.egraph_table:entry"
 
 [dependency-groups]
 dev = [
-    "tamagoyaki",
+    "tamagoyaki-case-studies",
 ]
 
 [project.entry-points.'xdsl.universe']

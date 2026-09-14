@@ -6,12 +6,22 @@ from __future__ import annotations
 
 import datetime
 import hashlib
+import json
 import os
 import platform
 import subprocess
 from pathlib import Path
 
-__all__ = ["cmd", "cpu_model", "field", "host_fields", "render", "sha256", "write"]
+__all__ = [
+    "cmd",
+    "cpu_model",
+    "field",
+    "framework_rev",
+    "host_fields",
+    "render",
+    "sha256",
+    "write",
+]
 
 #: Values are aligned at this column, wide enough for the longest key in use
 #: (``max_saturation_iters:``). Shared so the two manifests stay comparable.
@@ -72,6 +82,28 @@ def sha256(path: str | Path) -> str:
         return f"<unavailable: {e}>"
 
 
+def framework_rev() -> str:
+    """Which Tamagoyaki produced these numbers.
+
+    ``git_rev`` below names this repository, which since the split holds only
+    the pipelines and the case studies -- the framework under measurement is a
+    pinned flake input, and a manifest that does not say which revision of it
+    ran is not reproducible.
+
+    The eval wrappers and the Docker image bake it in as
+    ``TAMAGOYAKI_FRAMEWORK_REV``. Outside those, read it back out of the
+    lockfile, which is the same thing the wrappers were built from.
+    """
+    baked = os.environ.get("TAMAGOYAKI_FRAMEWORK_REV")
+    if baked:
+        return baked
+    out = cmd(["nix", "flake", "metadata", "--json"], keep=1)
+    try:
+        return json.loads(out)["locks"]["nodes"]["tamagoyaki"]["locked"]["rev"]
+    except Exception as e:
+        return f"<unavailable: {e}>"
+
+
 def host_fields(repo_root: str | Path) -> list[tuple[str, str]]:
     """The environment prefix every manifest starts with."""
     baked_rev = os.environ.get("TAMAGOYAKI_GIT_REV")
@@ -85,6 +117,7 @@ def host_fields(repo_root: str | Path) -> list[tuple[str, str]]:
     return [
         ("generated_utc", now),
         ("git_rev", git_rev),
+        ("tamagoyaki_rev", framework_rev()),
         ("host", platform.node()),
         ("platform", platform.platform()),
         ("cpu", f"{cpu_model()}  x{os.cpu_count()}"),

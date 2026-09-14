@@ -1,0 +1,76 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # At minute 0 past hour 6. (see https://crontab.guru)
+    - cron: "00 06 * * *"
+
+concurrency:
+  # A PR number if a pull request, otherwise the commit hash. This
+  # cancels queued and in-progress runs for the same PR (presubmit) or
+  # commit (postsubmit).
+  group: ci-${{ github.event.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+
+    permissions:
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - macos-15
+
+    defaults:
+      run:
+        # Run every step inside the CI nix shell -- the minimum env needed to
+        # configure and run `check-all`. No Rust, Racket, or Herbie graphics
+        # deps. Tamagoyaki itself comes from the pinned flake input, prebuilt.
+        shell: nix develop .#ci --command bash -e {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+
+      - name: Restore and save Nix store
+        uses: nix-community/cache-nix-action@v7
+        with:
+          # Invalidate the cache when the Nix dependencies change. flake.lock
+          # covers the pinned Tamagoyaki too, so bumping it rebuilds the cache.
+          primary-key: nix-${{ runner.os }}-${{ hashFiles('**/*.nix', '**/flake.lock') }}
+
+          # If the lockfile changes, fall back to the most recent cache for this OS
+          restore-prefixes-first-match: nix-${{ runner.os }}-
+
+          # Only save the cache if we are on the main branch.
+          # This prevents PRs from writing unchanged (or newly bloated) caches
+          # that evict the main branch's cache from the 10GB limit.
+          save: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Configure
+        run: case-studies-configure build
+
+      - name: Build and test (check-all)
+        run: ninja -C build check-all
+
+      - name: Upload ExternalProject logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: externalproject-logs-${{ matrix.os }}
+          path: |
+            build/herbie_mlir/rival/deps-build/**/src/*-stamp/*.log
